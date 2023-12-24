@@ -2,6 +2,12 @@
 
 pub use pallet::*;
 
+#[cfg(test)]
+mod mock;
+
+#[cfg(test)]
+mod tests;
+
 #[frame_support::pallet]
 pub mod pallet {
 	use frame_support::pallet_prelude::*;
@@ -95,7 +101,8 @@ pub mod pallet {
 			to: T::AccountId,
 		) -> DispatchResultWithPostInfo {
 			let sender = ensure_signed(origin)?;
-			let (owner, block_number) = Proofs::<T>::get(&claim).ok_or(Error::<T>::ClaimNotExist)?;
+			let (owner, block_number) =
+				Proofs::<T>::get(&claim).ok_or(Error::<T>::ClaimNotExist)?;
 
 			ensure!(owner == sender, Error::<T>::NotClaimOwner);
 
