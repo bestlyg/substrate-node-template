@@ -20,18 +20,20 @@ frame-benchmarking = {version = "4.0.0-dev", default-features = false, optional 
 frame-support = {version = "4.0.0-dev", default-features = false, git = "https://github.com/paritytech/substrate.git", branch = "polkadot-v1.0.0"}
 frame-system = {version = "4.0.0-dev", default-features = false, git = "https://github.com/paritytech/substrate.git", branch = "polkadot-v1.0.0"}
 scale-info = {version = "2.5.0", default-features = false, features = ["derive"]}
-sp-io = {version = "23.0.0", git = "https://github.com/paritytech/substrate.git", branch = "polkadot-v1.0.0"}
+sp-io = {version = "23.0.0", default-features = false, git = "https://github.com/paritytech/substrate.git", branch = "polkadot-v1.0.0"}
+sp-runtime = {version = "24.0.0", default-features = false, git = "https://github.com/paritytech/substrate.git", branch = "polkadot-v1.0.0"}
 
 [dev-dependencies]
 pallet-insecure-randomness-collective-flip = {version = "4.0.0-dev", git = "https://github.com/paritytech/substrate.git", branch = "polkadot-v1.0.0"}
 sp-core = {version = "21.0.0", git = "https://github.com/paritytech/substrate.git", branch = "polkadot-v1.0.0"}
-sp-runtime = {version = "24.0.0", git = "https://github.com/paritytech/substrate.git", branch = "polkadot-v1.0.0"}
+
 [features]
 default = ["std"]
 runtime-benchmarks = ["frame-benchmarking/runtime-benchmarks"]
 std = [
   "codec/std",
   "sp-io/std",
+  "sp-runtime/std",
   "frame-benchmarking?/std",
   "frame-support/std",
   "frame-system/std",
