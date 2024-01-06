@@ -32,10 +32,10 @@ pub mod pallet {
 	)]
 	pub struct Kitty {
 		pub dna: [u8; 16],
-		pub name: [u8; 4],
+		pub name: [u8; 8],
 	}
 
-	const STORAGE_VERSION: StorageVersion = StorageVersion::new(1);
+	const STORAGE_VERSION: StorageVersion = StorageVersion::new(2);
 	// pub struct Kitty(pub [u8; 16]);
 
 	#[pallet::pallet]
@@ -101,7 +101,7 @@ pub mod pallet {
 	#[pallet::hooks]
 	impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {
 		fn on_runtime_upgrade() -> Weight {
-			crate::migrations::v1::migrate::<T>()
+			crate::migrations::v2::migrate::<T>()
 		}
 	}
 
@@ -114,7 +114,7 @@ pub mod pallet {
 		/// storage and emits an event. This function must be dispatched by a signed extrinsic.
 		#[pallet::call_index(0)]
 		#[pallet::weight(10_000 + T::DbWeight::get().writes(1).ref_time())]
-		pub fn create(origin: OriginFor<T>, name: [u8; 4]) -> DispatchResult {
+		pub fn create(origin: OriginFor<T>, name: [u8; 8]) -> DispatchResult {
 			let who = ensure_signed(origin)?;
 			let kitty_id = Self::get_next_id()?;
 			let dna = Self::random_value(&who);
@@ -142,7 +142,7 @@ pub mod pallet {
 			origin: OriginFor<T>,
 			kitty_id1: KittyId,
 			kitty_id2: KittyId,
-			name: [u8; 4]
+			name: [u8; 8]
 		) -> DispatchResult {
 			let who = ensure_signed(origin)?;
 			ensure!(kitty_id1 != kitty_id2, Error::<T>::SameKittyId);
@@ -156,9 +156,9 @@ pub mod pallet {
 
 			let selector = Self::random_value(&who);
 			let mut dna = [0u8; 16];
-			// for (i, v) in selector.into_iter().enumerate() {
-			// 	data[i] = kitty1.0[i] & v | kitty2.0[i] & v;
-			// }
+			for (i, v) in selector.into_iter().enumerate() {
+				dna[i] = kitty1.dna[i] & v | kitty2.dna[i] & v;
+			}
 			// let kitty = Kitty(data);
 			let kitty = Kitty { dna, name };
 
