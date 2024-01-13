@@ -42,11 +42,12 @@ pub mod crypto {
 	}
 }
 
+use serde::{Deserialize, Deserializer};
+
 #[frame_support::pallet]
 pub mod pallet {
 	use super::*;
-	use frame_support::pallet_prelude::*;
-	use frame_system::pallet_prelude::*;
+	use frame_support::{dispatch::Vec, pallet_prelude::*};
 	use frame_system::{
 		offchain::{
 			AppCrypto, CreateSignedTransaction, SendUnsignedTransaction, SignedPayload, Signer,
@@ -60,6 +61,36 @@ pub mod pallet {
 		RuntimeDebug,
 	};
 
+	#[derive(Deserialize, Encode, Decode, Clone, Eq, PartialEq, scale_info::TypeInfo)]
+	struct GithubInfo {
+		#[serde(deserialize_with = "de_string_to_bytes")]
+		login: Vec<u8>,
+		#[serde(deserialize_with = "de_string_to_bytes")]
+		blog: Vec<u8>,
+		public_repos: u32,
+	}
+
+	pub fn de_string_to_bytes<'de, D>(de: D) -> Result<Vec<u8>, D::Error>
+	where
+		D: Deserializer<'de>,
+	{
+		let s: &str = Deserialize::deserialize(de)?;
+		Ok(s.as_bytes().to_vec())
+	}
+
+	use core::{convert::TryInto, fmt};
+	impl fmt::Debug for GithubInfo {
+		fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+			write!(
+				f,
+				"{{ login: {}, blog: {}, public_repos: {} }}",
+				sp_std::str::from_utf8(&self.login).map_err(|_| fmt::Error)?,
+				sp_std::str::from_utf8(&self.blog).map_err(|_| fmt::Error)?,
+				&self.public_repos
+			)
+		}
+	}
+
 	#[pallet::pallet]
 	pub struct Pallet<T>(_);
 
@@ -71,7 +102,7 @@ pub mod pallet {
 
 	#[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug, scale_info::TypeInfo)]
 	pub struct Payload<Public> {
-		number: u64,
+		data: GithubInfo,
 		public: Public,
 	}
 
@@ -129,7 +160,7 @@ pub mod pallet {
 
 			log::info!(
 				"OCW ==> in call unsigned_extrinsic_with_signed_payload: {:?}",
-				payload.number
+				payload.data
 			);
 			// Return a successful DispatchResultWithPostInfo
 			Ok(())
@@ -146,20 +177,56 @@ pub mod pallet {
 				sp_std::str::from_utf8(&value).unwrap()
 			);
 
-			let number: u64 = 42;
-			let signer = Signer::<T, T::AuthorityId>::any_account();
-			if let Some((_, res)) = signer.send_unsigned_transaction(
-				// this line is to prepare and return payload
-				|acct| Payload { number, public: acct.public.clone() },
-				|payload, signature| Call::unsigned_extrinsic_with_signed_payload { payload, signature },
-			) {
-				match res {
-					Ok(()) => {log::info!("OCW ==> unsigned tx with signed payload successfully sent.");}
-					Err(()) => {log::error!("OCW ==> sending unsigned tx with signed payload failed.");}
-				};
+			// let number: u64 = 42;
+			// let signer = Signer::<T, T::AuthorityId>::any_account();
+			// if let Some((_, res)) = signer.send_unsigned_transaction(
+			// 	// this line is to prepare and return payload
+			// 	|acct| Payload { number, public: acct.public.clone() },
+			// 	|payload, signature| Call::unsigned_extrinsic_with_signed_payload {
+			// 		payload,
+			// 		signature,
+			// 	},
+			// ) {
+			// 	match res {
+			// 		Ok(()) => {
+			// 			log::info!("OCW ==> unsigned tx with signed payload successfully sent.");
+			// 		},
+			// 		Err(()) => {
+			// 			log::error!("OCW ==> sending unsigned tx with signed payload failed.");
+			// 		},
+			// 	};
+			// } else {
+			// 	// The case of `None`: no account is available for sending
+			// 	log::error!("OCW ==> No local account available");
+			// }
+
+			if let Ok(info) = Self::fetch_github_info() {
+				log::info!("OCW ==> Github Info: {:?}", info);
+				let signer = Signer::<T, T::AuthorityId>::any_account();
+				if let Some((_, res)) = signer.send_unsigned_transaction(
+					// this line is to prepare and return payload
+					|acct| Payload { data: info.clone(), public: acct.public.clone() },
+					|payload, signature| Call::unsigned_extrinsic_with_signed_payload {
+						payload,
+						signature,
+					},
+				) {
+					match res {
+						Ok(()) => {
+							log::info!(
+								"OCW ==> unsigned tx with signed payload successfully sent."
+							);
+						},
+						Err(()) => {
+							log::error!("OCW ==> sending unsigned tx with signed payload failed.");
+						},
+					};
+				} else {
+					// The case of `None`: no account is available for sending
+					log::error!("OCW ==> No local account available");
+				}
 			} else {
-				// The case of `None`: no account is available for sending
-				log::error!("OCW ==> No local account available");
+				log::info!("OCW ==> Error while fetch Github info!");
 			}
 		}
 	}
@@ -175,6 +242,34 @@ pub mod pallet {
 				Some(value) => value.0,
 				None => Default::default(),
 			}
+		}
+
+		fn fetch_github_info() -> Result<GithubInfo, http::Error> {
+			// prepare for send request
+			let deadline = sp_io::offchain::timestamp().add(Duration::from_millis(8_000));
+			let request = http::Request::get("https://api.github.com/orgs/substrate-developer-hub");
+			let pending = request
+				.add_header("User-Agent", "Substrate-Offchain-Worker")
+				.deadline(deadline)
+				.send()
+				.map_err(|_| http::Error::IoError)?;
+			let response =
+				pending.try_wait(deadline).map_err(|_| http::Error::DeadlineReached)??;
+			if response.code != 200 {
+				log::warn!("Unexpected status code: {}", response.code);
+				return Err(http::Error::Unknown)
+			}
+			let body = response.body().collect::<Vec<u8>>();
+			let body_str = sp_std::str::from_utf8(&body).map_err(|_| {
+				log::warn!("No UTF8 body");
+				http::Error::Unknown
+			})?;
+
+			// parse the response str
+			let gh_info: GithubInfo =
+				serde_json::from_str(body_str).map_err(|_| http::Error::Unknown)?;
+
+			Ok(gh_info)
 		}
 	}
 
