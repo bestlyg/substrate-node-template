@@ -50,6 +50,7 @@ pub use pallet_kitties;
 pub use pallet_poe;
 /// Import the template pallet.
 pub use pallet_template;
+pub use pallet_ocw;
 
 /// An index to a block.
 pub type BlockNumber = u32;
@@ -275,6 +276,9 @@ impl pallet_template::Config for Runtime {
 	type RuntimeEvent = RuntimeEvent;
 	type WeightInfo = pallet_template::weights::SubstrateWeight<Runtime>;
 }
+impl pallet_ocw::Config for Runtime {
+	type RuntimeEvent = RuntimeEvent;
+}
 impl pallet_poe::Config for Runtime {
 	type RuntimeEvent = RuntimeEvent;
 	type MaxClaimLength = ConstU32<512>;
@@ -305,6 +309,7 @@ construct_runtime!(
 		Sudo: pallet_sudo,
 		// Include the custom logic from the pallet-template in the runtime.
 		TemplateModule: pallet_template,
+		OcwModule: pallet_ocw,
 		PoeModule: pallet_poe,
 		KittiesModule: pallet_kitties,
 		Randomness: pallet_insecure_randomness_collective_flip,

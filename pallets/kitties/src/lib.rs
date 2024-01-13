@@ -10,6 +10,7 @@ pub use pallet::*;
 
 mod migrations;
 
+
 #[frame_support::pallet]
 pub mod pallet {
 	use super::*;
