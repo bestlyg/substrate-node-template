@@ -10,3 +10,4 @@
 .envrc
 .direnv
 tmp
+node_modules
