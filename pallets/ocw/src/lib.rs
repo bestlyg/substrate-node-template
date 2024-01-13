@@ -1,21 +1,84 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
-/// Edit this file to define custom logic or remove it if it is not needed.
-/// Learn more about FRAME and the core library of Substrate FRAME pallets:
-/// <https://docs.substrate.io/reference/frame-pallets/>
+use codec::{Decode, Encode};
+use frame_system::offchain::{
+	AppCrypto, CreateSignedTransaction, SendUnsignedTransaction, SignedPayload, Signer,
+	SigningTypes,
+};
 pub use pallet::*;
-use sp_std::vec::Vec;
+use sp_core::crypto::KeyTypeId;
+use sp_runtime::{
+	transaction_validity::{InvalidTransaction, TransactionValidity, ValidTransaction},
+	RuntimeDebug,
+};
+
+pub const KEY_TYPE: KeyTypeId = KeyTypeId(*b"btc!");
+pub mod crypto {
+	use super::KEY_TYPE;
+	use codec::alloc::string::String;
+	use sp_core::sr25519::Signature as Sr25519Signature;
+	use sp_runtime::{
+		app_crypto::{app_crypto, sr25519},
+		traits::Verify,
+		MultiSignature, MultiSigner,
+	};
+	app_crypto!(sr25519, KEY_TYPE);
+
+	pub struct TestAuthId;
+
+	impl frame_system::offchain::AppCrypto<MultiSigner, MultiSignature> for TestAuthId {
+		type RuntimeAppPublic = Public;
+		type GenericSignature = sp_core::sr25519::Signature;
+		type GenericPublic = sp_core::sr25519::Public;
+	}
+
+	// implemented for mock runtime in test
+	impl frame_system::offchain::AppCrypto<<Sr25519Signature as Verify>::Signer, Sr25519Signature>
+		for TestAuthId
+	{
+		type RuntimeAppPublic = Public;
+		type GenericSignature = sp_core::sr25519::Signature;
+		type GenericPublic = sp_core::sr25519::Public;
+	}
+}
 
 #[frame_support::pallet]
 pub mod pallet {
 	use super::*;
 	use frame_support::pallet_prelude::*;
 	use frame_system::pallet_prelude::*;
+	use frame_system::{
+		offchain::{
+			AppCrypto, CreateSignedTransaction, SendUnsignedTransaction, SignedPayload, Signer,
+			SigningTypes,
+		},
+		pallet_prelude::*,
+	};
+	use sp_runtime::{
+		offchain::{http, Duration},
+		transaction_validity::{InvalidTransaction, TransactionValidity, ValidTransaction},
+		RuntimeDebug,
+	};
+
 	#[pallet::pallet]
 	pub struct Pallet<T>(_);
+
 	#[pallet::config]
-	pub trait Config: frame_system::Config {
+	pub trait Config: frame_system::Config + CreateSignedTransaction<Call<Self>> {
+		type AuthorityId: AppCrypto<Self::Public, Self::Signature>;
 		type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
+	}
+
+	#[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug, scale_info::TypeInfo)]
+	pub struct Payload<Public> {
+		number: u64,
+		public: Public,
+	}
+
+	impl<T: SigningTypes> SignedPayload<T> for Payload<T::Public> {
+		fn public(&self) -> T::Public {
+			self.public.clone()
+		}
 	}
 
 	const ONCHAIN_TX_KEY: &[u8] = b"ocw::onchain::tx::key";
@@ -39,7 +102,7 @@ pub mod pallet {
 	}
 	#[pallet::call]
 	impl<T: Config> Pallet<T> {
-		#[pallet::call_index(1)]
+		#[pallet::call_index(0)]
 		#[pallet::weight(0)]
 		pub fn set_value(
 			origin: OriginFor<T>,
@@ -54,6 +117,23 @@ pub mod pallet {
 			Self::deposit_event(Event::SetValue { value, who: _who });
 			Ok(())
 		}
+
+		#[pallet::call_index(1)]
+		#[pallet::weight(0)]
+		pub fn unsigned_extrinsic_with_signed_payload(
+			origin: OriginFor<T>,
+			payload: Payload<T::Public>,
+			_signature: T::Signature,
+		) -> DispatchResult {
+			ensure_none(origin)?;
+
+			log::info!(
+				"OCW ==> in call unsigned_extrinsic_with_signed_payload: {:?}",
+				payload.number
+			);
+			// Return a successful DispatchResultWithPostInfo
+			Ok(())
+		}
 	}
 
 	#[pallet::hooks]
@@ -65,17 +145,22 @@ pub mod pallet {
 				"get_value ==> from indexing data [{:?}]",
 				sp_std::str::from_utf8(&value).unwrap()
 			);
-		}
-		fn on_initialize(_n: BlockNumberFor<T>) -> Weight {
-			log::info!("OCW ==> in on_initialize!");
-			Weight::from_parts(0, 0)
-		}
-		fn on_finalize(_n: BlockNumberFor<T>) {
-			log::info!("OCW ==> in on_finalize!");
-		}
-		fn on_idle(_n: BlockNumberFor<T>, _remaining_weight: Weight) -> Weight {
-			log::info!("OCW ==> in on_idle!");
-			Weight::from_parts(0, 0)
+
+			let number: u64 = 42;
+			let signer = Signer::<T, T::AuthorityId>::any_account();
+			if let Some((_, res)) = signer.send_unsigned_transaction(
+				// this line is to prepare and return payload
+				|acct| Payload { number, public: acct.public.clone() },
+				|payload, signature| Call::unsigned_extrinsic_with_signed_payload { payload, signature },
+			) {
+				match res {
+					Ok(()) => {log::info!("OCW ==> unsigned tx with signed payload successfully sent.");}
+					Err(()) => {log::error!("OCW ==> sending unsigned tx with signed payload failed.");}
+				};
+			} else {
+				// The case of `None`: no account is available for sending
+				log::error!("OCW ==> No local account available");
+			}
 		}
 	}
 
@@ -89,6 +174,33 @@ pub mod pallet {
 				}) {
 				Some(value) => value.0,
 				None => Default::default(),
+			}
+		}
+	}
+
+	// 发送未签名交易时需要实现的 trait
+	#[pallet::validate_unsigned]
+	impl<T: Config> ValidateUnsigned for Pallet<T> {
+		type Call = Call<T>;
+		fn validate_unsigned(_source: TransactionSource, call: &Self::Call) -> TransactionValidity {
+			const UNSIGNED_TXS_PRIORITY: u64 = 100;
+			let valid_tx = |provide| {
+				ValidTransaction::with_tag_prefix("my-pallet")
+					.priority(UNSIGNED_TXS_PRIORITY) // please define `UNSIGNED_TXS_PRIORITY` before this line
+					.and_provides([&provide])
+					.longevity(3)
+					.propagate(true)
+					.build()
+			};
+
+			match call {
+				Call::unsigned_extrinsic_with_signed_payload { ref payload, ref signature } => {
+					if !SignedPayload::<T>::verify::<T::AuthorityId>(payload, signature.clone()) {
+						return InvalidTransaction::BadProof.into()
+					}
+					valid_tx(b"unsigned_extrinsic_with_signed_payload".to_vec())
+				},
+				_ => InvalidTransaction::Call.into(),
 			}
 		}
 	}
